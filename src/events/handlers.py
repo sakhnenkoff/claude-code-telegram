@@ -120,6 +120,7 @@ class AgentHandler:
                 prompt=prompt,
                 working_directory=working_dir,
                 user_id=self.default_user_id,
+                config_overrides=event.config_overrides,
             )
 
             if response.content:

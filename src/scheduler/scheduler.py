@@ -4,6 +4,7 @@ Wraps APScheduler's AsyncIOScheduler and publishes ScheduledEvents
 to the event bus when jobs fire.
 """
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -137,6 +138,7 @@ class JobScheduler:
         working_directory: str,
         target_chat_ids: List[int],
         skill_name: Optional[str],
+        config_overrides: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Called by APScheduler when a job triggers. Publishes a ScheduledEvent."""
         event = ScheduledEvent(
@@ -145,6 +147,7 @@ class JobScheduler:
             working_directory=Path(working_directory),
             target_chat_ids=target_chat_ids,
             skill_name=skill_name,
+            config_overrides=config_overrides or {},
         )
 
         logger.info(
@@ -177,6 +180,23 @@ class JobScheduler:
                         else []
                     )
 
+                    # Parse per-job config overrides
+                    config_overrides_raw = row_dict.get("config_overrides", "{}")
+                    try:
+                        config_overrides = (
+                            json.loads(config_overrides_raw)
+                            if config_overrides_raw
+                            else {}
+                        )
+                        if not isinstance(config_overrides, dict):
+                            config_overrides = {}
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "Invalid config_overrides JSON, using defaults",
+                            job_id=row_dict.get("job_id"),
+                        )
+                        config_overrides = {}
+
                     self._scheduler.add_job(
                         self._fire_event,
                         trigger=trigger,
@@ -186,6 +206,7 @@ class JobScheduler:
                             "working_directory": row_dict["working_directory"],
                             "target_chat_ids": chat_ids,
                             "skill_name": row_dict.get("skill_name"),
+                            "config_overrides": config_overrides,
                         },
                         id=row_dict["job_id"],
                         name=row_dict["job_name"],

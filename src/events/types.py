@@ -39,6 +39,7 @@ class ScheduledEvent(Event):
     working_directory: Path = field(default_factory=lambda: Path("."))
     target_chat_ids: List[int] = field(default_factory=list)
     skill_name: Optional[str] = None
+    config_overrides: Dict[str, Any] = field(default_factory=dict)
     source: str = "scheduler"
 
 

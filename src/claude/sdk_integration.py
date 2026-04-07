@@ -277,6 +277,7 @@ class ClaudeSDKManager:
         stream_callback: Optional[Callable[[StreamUpdate], None]] = None,
         interrupt_event: Optional[asyncio.Event] = None,
         images: Optional[List[Dict[str, str]]] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ) -> ClaudeResponse:
         """Execute Claude Code command via SDK."""
         start_time = asyncio.get_event_loop().time()
@@ -318,9 +319,25 @@ class ClaudeSDKManager:
                 sdk_allowed_tools = self.config.claude_allowed_tools
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
+            # Apply per-invocation overrides (never mutate self.config)
+            _ALLOWED_OVERRIDE_KEYS = {"max_turns", "timeout_seconds", "mcp_config_path"}
+            overrides = {}
+            if config_overrides and isinstance(config_overrides, dict):
+                overrides = {
+                    k: v for k, v in config_overrides.items()
+                    if k in _ALLOWED_OVERRIDE_KEYS
+                }
+
+            effective_max_turns = overrides.get(
+                "max_turns", self.config.claude_max_turns
+            )
+            effective_timeout = overrides.get(
+                "timeout_seconds", self.config.claude_timeout_seconds
+            )
+
             # Build Claude Agent options
             options = ClaudeAgentOptions(
-                max_turns=self.config.claude_max_turns,
+                max_turns=effective_max_turns,
                 model=self.config.claude_model or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
@@ -339,12 +356,23 @@ class ClaudeSDKManager:
             )
 
             # Pass MCP server configuration if enabled
-            if self.config.enable_mcp and self.config.mcp_config_path:
-                options.mcp_servers = self._load_mcp_config(self.config.mcp_config_path)
-                logger.info(
-                    "MCP servers configured",
-                    mcp_config_path=str(self.config.mcp_config_path),
-                )
+            # Per-job mcp_config_path REPLACES the global config (not merges)
+            effective_mcp_path = overrides.get(
+                "mcp_config_path", self.config.mcp_config_path
+            )
+            if self.config.enable_mcp and effective_mcp_path:
+                mcp_path = Path(effective_mcp_path)
+                if mcp_path.exists():
+                    options.mcp_servers = self._load_mcp_config(str(mcp_path))
+                    logger.info(
+                        "MCP servers configured",
+                        mcp_config_path=str(mcp_path),
+                    )
+                else:
+                    logger.warning(
+                        "MCP config path not found, skipping MCP",
+                        mcp_config_path=str(mcp_path),
+                    )
 
             # Wire can_use_tool callback for preventive tool validation
             if self.security_validator:
@@ -475,7 +503,7 @@ class ClaudeSDKManager:
                 try:
                     await asyncio.wait_for(
                         asyncio.shield(run_task),
-                        timeout=self.config.claude_timeout_seconds,
+                        timeout=effective_timeout,
                     )
                     break  # success — exit retry loop
                 except asyncio.CancelledError:
@@ -613,7 +641,7 @@ class ClaudeSDKManager:
                 timeout_seconds=self.config.claude_timeout_seconds,
             )
             raise ClaudeTimeoutError(
-                f"Claude SDK timed out after {self.config.claude_timeout_seconds}s"
+                f"Claude SDK timed out after {effective_timeout}s"
             )
 
         except CLINotFoundError as e:

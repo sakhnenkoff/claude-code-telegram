@@ -310,6 +310,13 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
+            (
+                5,
+                """
+                -- Per-job configuration overrides for scheduled jobs
+                ALTER TABLE scheduled_jobs ADD COLUMN config_overrides TEXT DEFAULT '{}';
+                """,
+            ),
         ]
 
     async def _init_pool(self):
