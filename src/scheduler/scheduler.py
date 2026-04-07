@@ -21,6 +21,15 @@ from ..storage.database import DatabaseManager
 
 logger = structlog.get_logger()
 
+# Maps job names to prompt template modes
+_JOB_MODE_MAP: Dict[str, str] = {
+    "Heartbeat Morning": "morning",
+    "Heartbeat Midday": "midday",
+    "Heartbeat Evening": "evening",
+    "Heartbeat Weekly": "weekly",
+    "Signal Scan": "nudge",
+}
+
 
 class JobScheduler:
     """Cron scheduler that publishes ScheduledEvents to the event bus."""
@@ -52,6 +61,62 @@ class JobScheduler:
         """Shutdown the scheduler gracefully."""
         self._scheduler.shutdown(wait=False)
         logger.info("Job scheduler stopped")
+
+    # ------------------------------------------------------------------
+    # Prompt template composition
+    # ------------------------------------------------------------------
+
+    def _compose_prompt(self, mode: str, base_prompt: str) -> str:
+        """Compose a prompt from template files, falling back to base_prompt.
+
+        Looks for ``prompts/shared.md`` and ``prompts/{mode}.md`` relative to
+        the package install path.  If both exist, returns their concatenation.
+        Otherwise returns *base_prompt* unchanged (backward-compatible).
+        """
+        # Primary: relative to the package root (…/site-packages/prompts/)
+        pkg_prompts = Path(__file__).parent.parent.parent / "prompts"
+
+        # Fallback: working directory parent (for dev / editable installs)
+        cwd_prompts = Path.cwd() / "prompts"
+
+        prompts_dir: Optional[Path] = None
+        if (pkg_prompts / "shared.md").is_file():
+            prompts_dir = pkg_prompts
+        elif (cwd_prompts / "shared.md").is_file():
+            prompts_dir = cwd_prompts
+
+        if prompts_dir is None:
+            logger.debug(
+                "No prompt templates found, using DB prompt",
+                pkg_path=str(pkg_prompts),
+                cwd_path=str(cwd_prompts),
+            )
+            return base_prompt
+
+        shared_path = prompts_dir / "shared.md"
+        mode_path = prompts_dir / f"{mode}.md"
+
+        if not mode_path.is_file():
+            logger.warning(
+                "Mode template not found, using DB prompt",
+                mode=mode,
+                expected_path=str(mode_path),
+            )
+            return base_prompt
+
+        shared_content = shared_path.read_text(encoding="utf-8")
+        mode_content = mode_path.read_text(encoding="utf-8")
+
+        logger.info(
+            "Composed prompt from templates",
+            mode=mode,
+            prompts_dir=str(prompts_dir),
+            shared_chars=len(shared_content),
+            mode_chars=len(mode_content),
+        )
+        return f"{shared_content}\n\n{mode_content}"
+
+    # ------------------------------------------------------------------
 
     async def add_job(
         self,
@@ -155,21 +220,23 @@ class JobScheduler:
                 )
                 result, pending_state = await scanner.scan()
 
-                if not result.has_changes:
-                    logger.debug(
-                        "Scan job found no changes, staying silent",
-                        job_name=job_name,
-                    )
-                    return
+                # Always invoke Claude — even without local changes,
+                # MCP tools (Slack, GitHub, Calendar, Email) may have signals.
+                if result.has_changes:
+                    signal_summary = result.summary
+                else:
+                    signal_summary = "No local changes detected since last scan."
 
-                # Wrap in signal-data tags for prompt injection safety
-                prompt = (
-                    f"<signal-data>\n{result.summary}\n</signal-data>\n\n{prompt}"
+                # Compose prompt from templates (falls back to DB prompt)
+                composed = self._compose_prompt("nudge", prompt)
+
+                composed = (
+                    f"<signal-data>\n{signal_summary}\n</signal-data>\n\n{composed}"
                 )
 
                 event = ScheduledEvent(
                     job_name=job_name,
-                    prompt=prompt,
+                    prompt=composed,
                     working_directory=Path(working_directory),
                     target_chat_ids=target_chat_ids,
                     skill_name=skill_name,
@@ -178,18 +245,29 @@ class JobScheduler:
                 )
 
                 logger.info(
-                    "Scan job fired with changes",
+                    "Scan job fired",
                     job_name=job_name,
+                    has_local_changes=result.has_changes,
                     event_id=event.id,
                 )
 
                 await self.event_bus.publish(event)
 
-                # Two-phase commit: only persist state after successful publish
-                await scanner.commit_state(pending_state)
+                # Two-phase commit: only persist state when there are actual changes
+                if result.has_changes:
+                    await scanner.commit_state(pending_state)
                 return
 
-        # Anchor type: always fire
+        # Anchor type: compose prompt from templates if mode is known
+        mode = _JOB_MODE_MAP.get(job_name)
+        if mode:
+            prompt = self._compose_prompt(mode, prompt)
+        else:
+            logger.debug(
+                "No template mode mapping for job, using DB prompt",
+                job_name=job_name,
+            )
+
         event = ScheduledEvent(
             job_name=job_name,
             prompt=prompt,
