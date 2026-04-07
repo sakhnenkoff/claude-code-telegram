@@ -317,6 +317,13 @@ class DatabaseManager:
                 ALTER TABLE scheduled_jobs ADD COLUMN config_overrides TEXT DEFAULT '{}';
                 """,
             ),
+            (
+                6,
+                """
+                -- Job type: 'anchor' (always invoke Claude) or 'scan' (pre-filter first)
+                ALTER TABLE scheduled_jobs ADD COLUMN job_type TEXT DEFAULT 'anchor';
+                """,
+            ),
         ]
 
     async def _init_pool(self):
