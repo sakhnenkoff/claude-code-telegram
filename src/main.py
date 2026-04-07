@@ -5,6 +5,12 @@ import asyncio
 import logging
 import signal
 import sys
+
+# Suppress httpx/httpcore INFO logging which prints full request URLs
+# containing the Telegram bot token (path-embedded credential).
+# Must run before any handler attaches. See upstream issue #180.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 from pathlib import Path
 from typing import Any, Dict, Optional
 
