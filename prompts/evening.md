@@ -23,9 +23,16 @@ Autonomous day wrap-up. Drafts updates but does NOT confirm task statuses.
    - Notes: NEVER TOUCH.
    Update YAML: `updated:` and `last_heartbeat:` to now.
 
-5. **Daily token cost summary:**
-   Run: `grep '"cost"' ~/.claude-telegram-bot/logs/bot.log | grep "$(date +%Y-%m-%d)" | awk -F'"cost": ' '{sum += $2; n++} END {printf "%.2f USD across %d invocations", sum, n}'`
-   Include in wrap-up.
+5. **Daily token cost summary (split by type):**
+   Run these two commands:
+   
+   Bot automation (scheduled jobs):
+   `grep -B5 '"cost"' ~/.claude-telegram-bot/logs/bot.log | grep -A5 'job_name' | grep "$(date +%Y-%m-%d)" | grep '"cost"' | awk -F'"cost": ' '{sum += $2; n++} END {printf "Bot: %.2f USD (%d jobs)", sum, n}'`
+   
+   Interactive sessions (your Telegram chats):
+   `grep '"cost"' ~/.claude-telegram-bot/logs/bot.log | grep "$(date +%Y-%m-%d)" | awk -F'"cost": ' '{sum += $2; n++} END {printf "Total: %.2f USD (%d invocations)", sum, n}'`
+   
+   Report both: "Today's cost: $X.XX total ($Y.YY bot automation, rest was your sessions)"
 
 6. **Deliver wrap-up** to Telegram:
    What got done, what was skipped, carry-forward, token cost.
