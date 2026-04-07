@@ -40,6 +40,7 @@ class ScheduledEvent(Event):
     target_chat_ids: List[int] = field(default_factory=list)
     skill_name: Optional[str] = None
     config_overrides: Dict[str, Any] = field(default_factory=dict)
+    job_type: str = "anchor"
     source: str = "scheduler"
 
 

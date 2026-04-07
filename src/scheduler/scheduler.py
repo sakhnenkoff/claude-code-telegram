@@ -4,6 +4,7 @@ Wraps APScheduler's AsyncIOScheduler and publishes ScheduledEvents
 to the event bus when jobs fire.
 """
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -33,6 +34,7 @@ class JobScheduler:
         self.event_bus = event_bus
         self.db_manager = db_manager
         self.default_working_directory = default_working_directory
+        self._scan_lock = asyncio.Lock()
         self._scheduler = AsyncIOScheduler(
             job_defaults={
                 "misfire_grace_time": None,  # Always run, no matter how late
@@ -139,8 +141,55 @@ class JobScheduler:
         target_chat_ids: List[int],
         skill_name: Optional[str],
         config_overrides: Optional[Dict[str, Any]] = None,
+        job_type: str = "anchor",
     ) -> None:
         """Called by APScheduler when a job triggers. Publishes a ScheduledEvent."""
+        if job_type == "scan":
+            async with self._scan_lock:
+                from ..signals.scanner import SignalScanner
+
+                state_db = Path(working_directory) / ".signal_state.db"
+                scanner = SignalScanner(
+                    vault_path=Path(working_directory),
+                    state_db_path=state_db,
+                )
+                result, pending_state = await scanner.scan()
+
+                if not result.has_changes:
+                    logger.debug(
+                        "Scan job found no changes, staying silent",
+                        job_name=job_name,
+                    )
+                    return
+
+                # Wrap in signal-data tags for prompt injection safety
+                prompt = (
+                    f"<signal-data>\n{result.summary}\n</signal-data>\n\n{prompt}"
+                )
+
+                event = ScheduledEvent(
+                    job_name=job_name,
+                    prompt=prompt,
+                    working_directory=Path(working_directory),
+                    target_chat_ids=target_chat_ids,
+                    skill_name=skill_name,
+                    config_overrides=config_overrides or {},
+                    job_type=job_type,
+                )
+
+                logger.info(
+                    "Scan job fired with changes",
+                    job_name=job_name,
+                    event_id=event.id,
+                )
+
+                await self.event_bus.publish(event)
+
+                # Two-phase commit: only persist state after successful publish
+                await scanner.commit_state(pending_state)
+                return
+
+        # Anchor type: always fire
         event = ScheduledEvent(
             job_name=job_name,
             prompt=prompt,
@@ -148,6 +197,7 @@ class JobScheduler:
             target_chat_ids=target_chat_ids,
             skill_name=skill_name,
             config_overrides=config_overrides or {},
+            job_type=job_type,
         )
 
         logger.info(
@@ -207,6 +257,7 @@ class JobScheduler:
                             "target_chat_ids": chat_ids,
                             "skill_name": row_dict.get("skill_name"),
                             "config_overrides": config_overrides,
+                            "job_type": row_dict.get("job_type", "anchor"),
                         },
                         id=row_dict["job_id"],
                         name=row_dict["job_name"],
