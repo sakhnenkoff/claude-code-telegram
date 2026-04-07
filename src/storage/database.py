@@ -187,7 +187,17 @@ class DatabaseManager:
             for version, migration in migrations:
                 if version > current_version:
                     logger.info("Running migration", version=version)
-                    await conn.executescript(migration)
+                    if migration.startswith("__add_column:"):
+                        # Idempotent column addition: __add_column:table:column:type
+                        _, table, column, col_type = migration.split(":", 3)
+                        cursor = await conn.execute(f"PRAGMA table_info({table})")
+                        columns = [row[1] for row in await cursor.fetchall()]
+                        if column not in columns:
+                            await conn.execute(
+                                f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+                            )
+                    else:
+                        await conn.executescript(migration)
                     await self._set_schema_version(conn, version)
 
             await conn.commit()
@@ -310,20 +320,9 @@ class DatabaseManager:
                     ON project_threads(project_slug);
                 """,
             ),
-            (
-                5,
-                """
-                -- Per-job configuration overrides for scheduled jobs
-                ALTER TABLE scheduled_jobs ADD COLUMN config_overrides TEXT DEFAULT '{}';
-                """,
-            ),
-            (
-                6,
-                """
-                -- Job type: 'anchor' (always invoke Claude) or 'scan' (pre-filter first)
-                ALTER TABLE scheduled_jobs ADD COLUMN job_type TEXT DEFAULT 'anchor';
-                """,
-            ),
+            # Migrations 5 and 6 use _add_column_if_not_exists (handled in _run_migrations)
+            (5, "__add_column:scheduled_jobs:config_overrides:TEXT DEFAULT '{}'"),
+            (6, "__add_column:scheduled_jobs:job_type:TEXT DEFAULT 'anchor'"),
         ]
 
     async def _init_pool(self):
