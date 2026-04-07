@@ -30,3 +30,9 @@ class ScanResult:
         if not changed:
             return ""
         return "\n".join(f"- {d.summary}" for d in changed)
+
+
+from .scanner import SignalScanner
+
+
+__all__ = ["SignalDelta", "ScanResult", "SignalScanner"]
