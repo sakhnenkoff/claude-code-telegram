@@ -19,7 +19,7 @@ from apscheduler.triggers.cron import CronTrigger  # type: ignore[import-untyped
 
 from ..events.bus import EventBus
 from ..events.types import ScheduledEvent
-from ..signals.detectors import Meeting
+from ..signals.detectors import CalendarDetector, Meeting
 from ..storage.database import DatabaseManager
 
 logger = structlog.get_logger()
@@ -30,7 +30,6 @@ _JOB_MODE_MAP: Dict[str, str] = {
     "Heartbeat Midday": "midday",
     "Heartbeat Evening": "evening",
     "Heartbeat Weekly": "weekly",
-    "Signal Scan": "nudge",
 }
 
 
@@ -238,19 +237,55 @@ class JobScheduler:
                 )
                 result, pending_state = await scanner.scan()
 
-                # Always invoke Claude — even without local changes,
-                # MCP tools (Slack, GitHub, Calendar, Email) may have signals.
-                if result.has_changes:
+                # Run calendar check
+                cal_detector = CalendarDetector()
+                upcoming_meetings = await cal_detector.detect()
+
+                # Evaluate trigger gate
+                trigger = await self._evaluate_trigger_gate(
+                    has_local_changes=result.has_changes,
+                    upcoming_meetings=upcoming_meetings,
+                    state=scanner.state,
+                )
+
+                if trigger is None:
+                    logger.debug("No triggers, skipping Claude invocation")
+                    # Still commit detector state so deltas don't re-detect
+                    if result.has_changes:
+                        await scanner.commit_state(pending_state)
+                    return
+
+                # Compose trigger-specific prompt
+                composed = self._compose_prompt(trigger.mode, prompt)
+
+                # Template fallback guard: if _compose_prompt fell back to DB prompt
+                # for non-change modes, skip — the DB prompt is wrong (old nudge).
+                if trigger.mode != "change" and composed == prompt:
+                    logger.error(
+                        "Template not found for mode, skipping invocation",
+                        mode=trigger.mode,
+                    )
+                    if result.has_changes:
+                        await scanner.commit_state(pending_state)
+                    return
+
+                # Inject signal-data + trigger context
+                if trigger.mode == "prep" and result.has_changes:
+                    signal_summary = f"Meeting prep mode. Also since last check:\n{result.summary}"
+                elif result.has_changes:
                     signal_summary = result.summary
                 else:
-                    signal_summary = "No local changes detected since last scan."
+                    signal_summary = "No local changes."
+                composed = f"<signal-data>\n{signal_summary}\n</signal-data>\n\n{composed}"
 
-                # Compose prompt from templates (falls back to DB prompt)
-                composed = self._compose_prompt("nudge", prompt)
-
-                composed = (
-                    f"<signal-data>\n{signal_summary}\n</signal-data>\n\n{composed}"
-                )
+                if trigger.mode == "prep" and trigger.context:
+                    composed += (
+                        f"\n\n<meeting-context>\n"
+                        f"Title: {trigger.context.title}\n"
+                        f"Starts: {trigger.context.start_time}\n"
+                        f"Calendar: {trigger.context.calendar}\n"
+                        f"</meeting-context>"
+                    )
 
                 event = ScheduledEvent(
                     job_name=job_name,
@@ -260,18 +295,20 @@ class JobScheduler:
                     skill_name=skill_name,
                     config_overrides=config_overrides or {},
                     job_type=job_type,
+                    trigger_mode=trigger.mode,
                 )
 
                 logger.info(
                     "Scan job fired",
                     job_name=job_name,
+                    trigger_mode=trigger.mode,
                     has_local_changes=result.has_changes,
                     event_id=event.id,
                 )
 
                 await self.event_bus.publish(event)
 
-                # Two-phase commit: only persist state when there are actual changes
+                # Commit detector state (two-phase: after successful publish)
                 if result.has_changes:
                     await scanner.commit_state(pending_state)
                 return
