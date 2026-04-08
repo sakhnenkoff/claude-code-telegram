@@ -11,6 +11,8 @@ import asyncio
 import json
 import re
 import subprocess
+from dataclasses import dataclass
+from datetime import datetime, time
 from pathlib import Path
 from typing import Awaitable, Callable, Protocol, Sequence
 
@@ -271,9 +273,75 @@ class ProjectDetector:
         return changes
 
 
+@dataclass
+class Meeting:
+    """A calendar meeting parsed from cal-today-bin output."""
+
+    title: str
+    start_time: datetime
+    end_time: datetime
+    calendar: str
+    starts_in_minutes: float
+
+
+_CAL_LINE_RE = re.compile(
+    r"^-\s+(\d{2}:\d{2})\s+-\s+(\d{2}:\d{2})\s{2,}(.+?)\s{2,}\[(.+?)\]$"
+)
+
+
+class CalendarDetector:
+    """Check for upcoming work meetings using cal-today-bin."""
+
+    async def detect(self) -> list[Meeting]:
+        """Return work meetings starting in the next 15 minutes."""
+        output = await asyncio.to_thread(self._run_cal_today)
+        meetings = self._parse_meetings(output)
+        return [
+            m
+            for m in meetings
+            if 0 < m.starts_in_minutes <= 15
+            and m.calendar.endswith("@vend.com")
+        ]
+
+    def _run_cal_today(self) -> str:
+        result = subprocess.run(
+            [str(Path.home() / ".local/bin/cal-today-bin")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout if result.returncode == 0 else ""
+
+    def _parse_meetings(self, output: str) -> list[Meeting]:
+        meetings: list[Meeting] = []
+        now = datetime.now()
+        today = now.date()
+        for line in output.strip().splitlines():
+            match = _CAL_LINE_RE.match(line.strip())
+            if not match:
+                continue
+            start_h, start_m = map(int, match.group(1).split(":"))
+            end_h, end_m = map(int, match.group(2).split(":"))
+            start_dt = datetime.combine(today, time(start_h, start_m))
+            end_dt = datetime.combine(today, time(end_h, end_m))
+            delta = (start_dt - now).total_seconds() / 60
+            meetings.append(
+                Meeting(
+                    title=match.group(3).strip(),
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    calendar=match.group(4).strip(),
+                    starts_in_minutes=delta,
+                )
+            )
+        return meetings
+
+
 __all__ = [
+    "CalendarDetector",
     "GitDetector",
     "InboxDetector",
+    "Meeting",
     "ProjectDetector",
     "TaskDetector",
 ]
