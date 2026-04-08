@@ -16,6 +16,10 @@ from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
 
 logger = structlog.get_logger()
 
+# Responses that should not be forwarded to Telegram.
+# HEARTBEAT_OK: reserved for future/legacy heartbeat modes.
+_SUPPRESS_RESPONSES = frozenset({"SILENT", "HEARTBEAT_OK"})
+
 
 class AgentHandler:
     """Translates incoming events into Claude agent executions.
@@ -121,9 +125,12 @@ class AgentHandler:
                 working_directory=working_dir,
                 user_id=self.default_user_id,
                 config_overrides=event.config_overrides,
+                force_new=True,
             )
 
-            if response.content:
+            # Filter suppression responses (SILENT, HEARTBEAT_OK)
+            # Publish BEFORE session cleanup — cleanup failure must not block delivery
+            if response.content and response.content.strip().upper() not in _SUPPRESS_RESPONSES:
                 for chat_id in event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
@@ -141,6 +148,23 @@ class AgentHandler:
                             text=response.content,
                             originating_event_id=event.id,
                         )
+                    )
+            else:
+                logger.info(
+                    "Suppressed scheduled response",
+                    job_name=event.job_name,
+                    response_preview=response.content[:50] if response.content else "(empty)",
+                )
+
+            # Clean up — don't let heartbeat sessions pollute user auto-resume.
+            # Runs AFTER publish so cleanup failure doesn't block delivery.
+            if response.session_id:
+                try:
+                    await self.claude.session_manager.remove_session(response.session_id)
+                except Exception:
+                    logger.debug(
+                        "Session cleanup failed",
+                        session_id=response.session_id,
                     )
 
     def _task_done(self, task: asyncio.Task[Any]) -> None:
