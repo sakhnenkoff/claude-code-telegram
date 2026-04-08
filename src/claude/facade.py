@@ -4,6 +4,7 @@ Provides simple interface for bot handlers.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -11,7 +12,7 @@ import structlog
 
 from ..config.settings import Settings
 from .sdk_integration import ClaudeResponse, ClaudeSDKManager, StreamUpdate
-from .session import SessionManager
+from .session import SessionManager, _to_utc
 
 logger = structlog.get_logger()
 
@@ -60,20 +61,33 @@ class ClaudeIntegration:
                 user_id, working_directory
             )
             if existing_session:
-                # Auto-rotate sessions that have accumulated too much cost.
-                # Each resume re-reads the full conversation history, so cost
-                # compounds quadratically. Cap at $5 total to prevent runaway.
-                if existing_session.total_cost >= self.config.session_max_cost:
+                # Auto-rotate sessions that have accumulated too much cost,
+                # but only after an idle gap — never mid-conversation.
+                # This prevents jarring context loss during active chat.
+                cost_exceeded = (
+                    existing_session.total_cost >= self.config.session_max_cost
+                )
+                idle_minutes = (
+                    datetime.now(UTC) - _to_utc(existing_session.last_used)
+                ).total_seconds() / 60
+
+                if cost_exceeded and idle_minutes >= 30:
                     logger.info(
-                        "Session cost cap reached, starting fresh",
+                        "Session cost cap reached after idle gap, rotating",
                         session_id=existing_session.session_id,
                         total_cost=existing_session.total_cost,
+                        idle_minutes=round(idle_minutes),
                         cap=self.config.session_max_cost,
                     )
                     await self.session_manager.remove_session(
                         existing_session.session_id
                     )
                 else:
+                    if cost_exceeded:
+                        logger.debug(
+                            "Session over cost cap but still active, deferring rotation",
+                            idle_minutes=round(idle_minutes),
+                        )
                     session_id = existing_session.session_id
                     logger.info(
                         "Auto-resuming existing session for project",
