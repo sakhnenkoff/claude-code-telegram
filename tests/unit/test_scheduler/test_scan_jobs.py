@@ -91,10 +91,10 @@ class TestScanJobType:
         assert event.job_type == "scan"
 
         # Prompt injection safety: summary wrapped in signal-data tags
+        assert event.prompt.startswith("<signal-data>")
         assert "<signal-data>" in event.prompt
         assert "3 new commits on main" in event.prompt
         assert "</signal-data>" in event.prompt
-        assert event.prompt.endswith("Check for updates")
 
         # Two-phase commit: state committed after publish
         mock_scanner.commit_state.assert_awaited_once_with(pending_state)
@@ -103,7 +103,7 @@ class TestScanJobType:
     async def test_scan_job_silent_when_no_changes(
         self, scheduler, event_bus, tmp_path
     ):
-        """When scanner detects no changes, no event is published."""
+        """When scanner detects no local changes, Claude still runs with MCP context."""
         scan_result = ScanResult(deltas=[SignalDelta(changed=False, summary="")])
         pending_state = {}
 
@@ -121,9 +121,12 @@ class TestScanJobType:
                 job_type="scan",
             )
 
-        # No event published
-        event_bus.publish.assert_not_awaited()
-        # State not committed either
+        event_bus.publish.assert_awaited_once()
+        event = event_bus.publish.call_args[0][0]
+        assert isinstance(event, ScheduledEvent)
+        assert "No local changes detected since last scan." in event.prompt
+
+        # State is not committed without actual local changes
         mock_scanner.commit_state.assert_not_awaited()
 
     @pytest.mark.asyncio

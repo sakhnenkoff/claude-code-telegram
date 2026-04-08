@@ -323,6 +323,7 @@ class DatabaseManager:
             # Migrations 5 and 6 use _add_column_if_not_exists (handled in _run_migrations)
             (5, "__add_column:scheduled_jobs:config_overrides:TEXT DEFAULT '{}'"),
             (6, "__add_column:scheduled_jobs:job_type:TEXT DEFAULT 'anchor'"),
+            (7, "__add_column:scheduled_jobs:last_fired_at:TIMESTAMP DEFAULT NULL"),
         ]
 
     async def _init_pool(self):

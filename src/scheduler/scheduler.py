@@ -6,6 +6,7 @@ to the event bus when jobs fire.
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -56,6 +57,7 @@ class JobScheduler:
         await self._load_jobs_from_db()
         self._scheduler.start()
         logger.info("Job scheduler started")
+        await self._check_missed_anchors()
 
     async def stop(self) -> None:
         """Shutdown the scheduler gracefully."""
@@ -286,6 +288,18 @@ class JobScheduler:
 
         await self.event_bus.publish(event)
 
+        # Track last_fired_at for idempotent catch-up.
+        try:
+            tz = CronTrigger.from_crontab("0 0 * * *").timezone
+            async with self.db_manager.get_connection() as conn:
+                await conn.execute(
+                    "UPDATE scheduled_jobs SET last_fired_at = ? WHERE job_name = ? AND is_active = 1",
+                    (datetime.now(tz=tz).isoformat(), job_name),
+                )
+                await conn.commit()
+        except Exception:
+            logger.debug("Could not update last_fired_at", job_name=job_name)
+
     async def _load_jobs_from_db(self) -> None:
         """Load persisted jobs and re-register them with APScheduler."""
         try:
@@ -356,6 +370,86 @@ class JobScheduler:
         except Exception:
             # Table might not exist yet on first run
             logger.debug("No scheduled_jobs table found, starting fresh")
+
+    async def _check_missed_anchors(self) -> None:
+        """Fire anchor jobs that should have already run today."""
+        trigger_sample = CronTrigger.from_crontab("0 0 * * *")
+        local_tz = trigger_sample.timezone
+        now = datetime.now(tz=local_tz)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        try:
+            async with self.db_manager.get_connection() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM scheduled_jobs WHERE is_active = 1 AND job_type = 'anchor'"
+                )
+                rows = list(await cursor.fetchall())
+
+            for row in rows:
+                row_dict = dict(row)
+                try:
+                    trigger = CronTrigger.from_crontab(row_dict["cron_expression"])
+                    next_from_midnight = trigger.get_next_fire_time(None, midnight)
+
+                    if not (next_from_midnight and midnight <= next_from_midnight <= now):
+                        continue
+
+                    last_fired = row_dict.get("last_fired_at")
+                    if last_fired:
+                        last_fired_dt = datetime.fromisoformat(str(last_fired))
+                        if last_fired_dt.date() >= now.date():
+                            logger.debug(
+                                "Anchor already fired today, skipping catch-up",
+                                job_name=row_dict["job_name"],
+                            )
+                            continue
+
+                    logger.info(
+                        "Detected missed anchor job, firing catch-up",
+                        job_name=row_dict["job_name"],
+                        scheduled_time=str(next_from_midnight),
+                        current_time=str(now),
+                    )
+
+                    chat_ids_str = row_dict.get("target_chat_ids", "")
+                    chat_ids = (
+                        [int(x) for x in chat_ids_str.split(",") if x.strip()]
+                        if chat_ids_str
+                        else []
+                    )
+
+                    try:
+                        config_overrides = json.loads(
+                            row_dict.get("config_overrides", "{}") or "{}"
+                        )
+                        if not isinstance(config_overrides, dict):
+                            config_overrides = {}
+                    except (json.JSONDecodeError, TypeError):
+                        config_overrides = {}
+
+                    await self._fire_event(
+                        job_name=row_dict["job_name"],
+                        prompt=row_dict["prompt"],
+                        working_directory=row_dict["working_directory"],
+                        target_chat_ids=chat_ids,
+                        skill_name=row_dict.get("skill_name"),
+                        config_overrides=config_overrides,
+                        job_type=row_dict.get("job_type", "anchor"),
+                    )
+
+                    async with self.db_manager.get_connection() as conn:
+                        await conn.execute(
+                            "UPDATE scheduled_jobs SET last_fired_at = ? WHERE job_id = ?",
+                            (now.isoformat(), row_dict["job_id"]),
+                        )
+                        await conn.commit()
+                except Exception:
+                    logger.exception(
+                        "Failed to check missed anchor",
+                        job_id=row_dict.get("job_id"),
+                    )
+        except Exception:
+            logger.debug("Could not check missed anchors")
 
     async def _save_job(
         self,
