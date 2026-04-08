@@ -5,12 +5,14 @@ NotificationHandler: subscribes to AgentResponseEvent and delivers to Telegram.
 """
 
 import asyncio
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
 import structlog
 
 from ..claude.facade import ClaudeIntegration
+from ..signals.state import StateStore
 from .bus import Event, EventBus
 from .types import AgentResponseEvent, ScheduledEvent, WebhookEvent
 
@@ -130,7 +132,11 @@ class AgentHandler:
 
             # Filter suppression responses (SILENT, HEARTBEAT_OK)
             # Publish BEFORE session cleanup — cleanup failure must not block delivery
-            if response.content and response.content.strip().upper() not in _SUPPRESS_RESPONSES:
+            is_actionable = (
+                response.content
+                and response.content.strip().upper() not in _SUPPRESS_RESPONSES
+            )
+            if is_actionable:
                 for chat_id in event.target_chat_ids:
                     await self.event_bus.publish(
                         AgentResponseEvent(
@@ -155,6 +161,24 @@ class AgentHandler:
                     job_name=event.job_name,
                     response_preview=response.content[:50] if response.content else "(empty)",
                 )
+
+            # Update gate state AFTER Claude completes (not before)
+            trigger_mode = event.trigger_mode
+            if trigger_mode and event.working_directory:
+                try:
+                    state = StateStore(event.working_directory / ".signal_state.db")
+                    await state.initialize()
+                    now_iso = datetime.now().isoformat()
+
+                    # last_mcp_check: ONLY for CATCHUP (regardless of SILENT — full scan ran)
+                    if trigger_mode == "catchup":
+                        await state.set("gate:last_mcp_check", now_iso)
+
+                    # last_nudge_sent: only when actionable + not PREP (PREP bypasses cooldown)
+                    if is_actionable and trigger_mode != "prep":
+                        await state.set("gate:last_nudge_sent", now_iso)
+                except Exception:
+                    logger.debug("Gate state update failed", trigger_mode=trigger_mode)
 
             # Clean up — don't let heartbeat sessions pollute user auto-resume.
             # Runs AFTER publish so cleanup failure doesn't block delivery.
