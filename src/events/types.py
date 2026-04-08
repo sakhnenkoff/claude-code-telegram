@@ -41,6 +41,7 @@ class ScheduledEvent(Event):
     skill_name: Optional[str] = None
     config_overrides: Dict[str, Any] = field(default_factory=dict)
     job_type: str = "anchor"
+    trigger_mode: str = ""  # "change", "prep", "catchup", or "" for non-scan jobs
     source: str = "scheduler"
 
 
