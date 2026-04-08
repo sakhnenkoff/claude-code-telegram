@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     max_sessions_per_user: int = Field(
         DEFAULT_MAX_SESSIONS_PER_USER, description="Max concurrent sessions"
     )
+    session_max_cost: float = Field(
+        default=5.0,
+        description="Auto-rotate session when cumulative cost exceeds this (USD)",
+    )
 
     # Features
     enable_mcp: bool = Field(False, description="Enable Model Context Protocol")

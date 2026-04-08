@@ -60,13 +60,27 @@ class ClaudeIntegration:
                 user_id, working_directory
             )
             if existing_session:
-                session_id = existing_session.session_id
-                logger.info(
-                    "Auto-resuming existing session for project",
-                    session_id=session_id,
-                    project_path=str(working_directory),
-                    user_id=user_id,
-                )
+                # Auto-rotate sessions that have accumulated too much cost.
+                # Each resume re-reads the full conversation history, so cost
+                # compounds quadratically. Cap at $5 total to prevent runaway.
+                if existing_session.total_cost >= self.config.session_max_cost:
+                    logger.info(
+                        "Session cost cap reached, starting fresh",
+                        session_id=existing_session.session_id,
+                        total_cost=existing_session.total_cost,
+                        cap=self.config.session_max_cost,
+                    )
+                    await self.session_manager.remove_session(
+                        existing_session.session_id
+                    )
+                else:
+                    session_id = existing_session.session_id
+                    logger.info(
+                        "Auto-resuming existing session for project",
+                        session_id=session_id,
+                        project_path=str(working_directory),
+                        user_id=user_id,
+                    )
 
         # Get or create session
         session = await self.session_manager.get_or_create_session(

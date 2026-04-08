@@ -320,7 +320,7 @@ class ClaudeSDKManager:
                 sdk_disallowed_tools = self.config.claude_disallowed_tools
 
             # Apply per-invocation overrides (never mutate self.config)
-            _ALLOWED_OVERRIDE_KEYS = {"max_turns", "timeout_seconds", "mcp_config_path"}
+            _ALLOWED_OVERRIDE_KEYS = {"max_turns", "timeout_seconds", "mcp_config_path", "model"}
             overrides = {}
             if config_overrides and isinstance(config_overrides, dict):
                 overrides = {
@@ -338,7 +338,7 @@ class ClaudeSDKManager:
             # Build Claude Agent options
             options = ClaudeAgentOptions(
                 max_turns=effective_max_turns,
-                model=self.config.claude_model or None,
+                model=overrides.get("model", self.config.claude_model) or None,
                 max_budget_usd=self.config.claude_max_cost_per_request,
                 cwd=str(working_directory),
                 allowed_tools=sdk_allowed_tools,
