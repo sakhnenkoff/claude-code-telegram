@@ -35,8 +35,8 @@ Autonomous day wrap-up. Drafts updates but does NOT confirm task statuses.
    Report both: "Today's cost: $X.XX total ($Y.YY bot automation, rest was your sessions)"
 
 6. **Deliver wrap-up** to Telegram:
-   What got done, what was skipped, carry-forward, token cost.
-   If tasks look done from signals: "These look done: [list]. Run /closeday to confirm."
+   Tell the story of the day — what landed, what slipped, what carries to tomorrow. Weave in token cost naturally (e.g. "cost you $X.XX today"). If things look done from signals: "These look done: [list]. Run /closeday to confirm."
+   Suggest one proactive thing for tomorrow if it's obvious — a follow-up, a PR to review, a person to ping.
    Do NOT change task statuses. Do NOT prompt reflection. That's /closeday's job.
    Under 300 words.
 </instructions>
