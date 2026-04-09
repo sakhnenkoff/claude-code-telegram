@@ -1212,3 +1212,119 @@ class TestClaudeMdLoading:
 
         opts = captured[0]
         assert opts.setting_sources == ["user", "project"]
+
+
+class TestMCPConfigMerge:
+    """Tests for MCP config merge behavior."""
+
+    async def test_mcp_config_merge_with_base(self, tmp_path):
+        """Per-job config merges on top of global config."""
+        global_config = tmp_path / "global.json"
+        global_config.write_text(
+            '{"mcpServers": {"server-a": {"command": "a"}}}'
+        )
+        job_config = tmp_path / "job.json"
+        job_config.write_text(
+            '{"mcpServers": {"server-b": {"command": "b"}}}'
+        )
+
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            enable_mcp=True,
+            mcp_config_path=str(global_config),
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="test",
+                working_directory=tmp_path,
+                config_overrides={"mcp_config_path": str(job_config)},
+            )
+
+        servers = captured[0].mcp_servers
+        assert "server-a" in servers, "Global server should be inherited"
+        assert "server-b" in servers, "Job server should be present"
+
+    async def test_mcp_config_override_wins(self, tmp_path):
+        """Job config wins when both define the same server."""
+        global_config = tmp_path / "global.json"
+        global_config.write_text(
+            '{"mcpServers": {"github": {"command": "global-gh"}}}'
+        )
+        job_config = tmp_path / "job.json"
+        job_config.write_text(
+            '{"mcpServers": {"github": {"command": "job-gh"}}}'
+        )
+
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            enable_mcp=True,
+            mcp_config_path=str(global_config),
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="test",
+                working_directory=tmp_path,
+                config_overrides={"mcp_config_path": str(job_config)},
+            )
+
+        assert captured[0].mcp_servers["github"]["command"] == "job-gh"
+
+    async def test_mcp_config_no_override_no_merge(self, tmp_path):
+        """Without per-job override, global config is used directly (no merge)."""
+        global_config = tmp_path / "global.json"
+        global_config.write_text(
+            '{"mcpServers": {"server-a": {"command": "a"}}}'
+        )
+
+        config = Settings(
+            telegram_bot_token="test:token",
+            telegram_bot_username="testbot",
+            approved_directory=tmp_path,
+            enable_mcp=True,
+            mcp_config_path=str(global_config),
+        )
+        manager = ClaudeSDKManager(config)
+
+        captured: list = []
+        mock_factory = _mock_client_factory(
+            _make_assistant_message("ok"),
+            _make_result_message(),
+            capture_options=captured,
+        )
+
+        with patch(
+            "src.claude.sdk_integration.ClaudeSDKClient", side_effect=mock_factory
+        ):
+            await manager.execute_command(
+                prompt="test",
+                working_directory=tmp_path,
+            )
+
+        servers = captured[0].mcp_servers
+        assert servers == {"server-a": {"command": "a"}}

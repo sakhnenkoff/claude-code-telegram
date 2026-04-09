@@ -356,17 +356,21 @@ class ClaudeSDKManager:
             )
 
             # Pass MCP server configuration if enabled
-            # Per-job mcp_config_path REPLACES the global config (not merges)
+            # Per-job mcp_config_path merges ON TOP of the global config
             effective_mcp_path = overrides.get(
                 "mcp_config_path", self.config.mcp_config_path
             )
             if self.config.enable_mcp and effective_mcp_path:
                 mcp_path = Path(effective_mcp_path)
                 if mcp_path.exists():
-                    options.mcp_servers = self._load_mcp_config(str(mcp_path))
-                    logger.info(
-                        "MCP servers configured",
-                        mcp_config_path=str(mcp_path),
+                    # When a per-job override is present, load global first as base
+                    base_servers = None
+                    if "mcp_config_path" in overrides and self.config.mcp_config_path:
+                        global_path = Path(self.config.mcp_config_path)
+                        if global_path.exists():
+                            base_servers = self._load_mcp_config(global_path)
+                    options.mcp_servers = self._load_mcp_config(
+                        mcp_path, base_servers=base_servers
                     )
                 else:
                     logger.warning(
@@ -777,19 +781,32 @@ class ClaudeSDKManager:
         except Exception as e:
             logger.warning("Stream callback failed", error=str(e))
 
-    def _load_mcp_config(self, config_path: Path) -> Dict[str, Any]:
+    def _load_mcp_config(
+        self,
+        config_path: Path,
+        base_servers: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Load MCP server configuration from a JSON file.
 
-        The new claude-agent-sdk expects mcp_servers as a dict, not a file path.
+        If base_servers is provided, the loaded config is merged ON TOP,
+        so per-job configs can override specific servers while inheriting
+        the rest from the global config.
         """
         import json
 
+        servers: Dict[str, Any] = dict(base_servers) if base_servers else {}
         try:
             with open(config_path) as f:
                 config_data = json.load(f)
-            return config_data.get("mcpServers", {})
+            servers.update(config_data.get("mcpServers", {}))
         except (json.JSONDecodeError, OSError) as e:
             logger.error(
                 "Failed to load MCP config", path=str(config_path), error=str(e)
             )
-            return {}
+
+        logger.info(
+            "MCP servers resolved",
+            server_names=list(servers.keys()),
+            source=str(config_path),
+        )
+        return servers
