@@ -10,7 +10,7 @@ You receive a `<signal-data>` block with what changed.
    - Skip Slack, Gmail, Calendar — this is a local-change notification
 
 3. **Respond:**
-   - Terse, technical. One-liner per change.
+   - Brief and direct. One-liner per change. (Override: terse technical tone applies here, not buddy mode)
    - Include PR/CI context if relevant
    - Max 3 bullets
    - Under 100 words

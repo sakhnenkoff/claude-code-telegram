@@ -10,7 +10,7 @@ Autonomous day wrap-up. Drafts updates but does NOT confirm task statuses.
 2. **Compare plan vs actual:**
    What was planned? What signals show happened (git, tasks, sessions)?
    Identify: completed, skipped, unplanned work.
-   Note patterns: "You planned X but signals show Y instead."
+   Note patterns — e.g. "You said you'd tackle X but ended up deep in Y."
 
 3. **Draft carry-forward:**
    Unfinished plan items, "Tomorrow" items from daily note, tasks due within 48h.
