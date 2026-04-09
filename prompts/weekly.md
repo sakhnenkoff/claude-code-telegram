@@ -14,6 +14,7 @@ Week-in-review. Replaces evening on Fridays.
    Upcoming: calendar + tasks for next week.
 
 4. **Deliver weekly digest** to Telegram:
-   Week summary, goal alignment, 2-3 suggested priorities for next week, strategic nudges.
+   Reflect on the week like a friend who's been watching — what moved, what stalled, what deserves attention next week. 2-3 suggested priorities, strategic nudges where earned.
+   Be honest about patterns — if something's been avoided all week, name it. If something shipped that deserves a moment, acknowledge it.
    Under 400 words, actionable.
 </instructions>
