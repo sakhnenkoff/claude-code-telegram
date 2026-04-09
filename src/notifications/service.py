@@ -12,6 +12,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
+from ..bot.utils.html_format import markdown_to_telegram_html
 from ..events.bus import Event, EventBus
 from ..events.types import AgentResponseEvent
 
@@ -100,16 +101,34 @@ class NotificationService:
             await asyncio.sleep(wait_time)
 
         try:
-            # Split long messages (Telegram limit: 4096 chars)
+            # Convert markdown to Telegram HTML when sending as HTML
             text = event.text
+            parse_mode = ParseMode.HTML if event.parse_mode == "HTML" else None
+            if parse_mode == ParseMode.HTML:
+                text = markdown_to_telegram_html(text)
+
             chunks = self._split_message(text)
 
             for chunk in chunks:
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=chunk,
-                    parse_mode=(ParseMode.HTML if event.parse_mode == "HTML" else None),
-                )
+                try:
+                    await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        parse_mode=parse_mode,
+                    )
+                except TelegramError as e:
+                    if parse_mode is None:
+                        raise
+                    logger.warning(
+                        "HTML send failed, retrying as plain text",
+                        chat_id=chat_id,
+                        error=str(e),
+                    )
+                    await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                    )
+
                 self._last_send_per_chat[chat_id] = asyncio.get_event_loop().time()
 
                 # Rate limit between chunks too
@@ -131,7 +150,7 @@ class NotificationService:
                 event_id=event.id,
             )
 
-    def _split_message(self, text: str, max_length: int = 4096) -> List[str]:
+    def _split_message(self, text: str, max_length: int = 4000) -> List[str]:
         """Split long messages at paragraph boundaries."""
         if len(text) <= max_length:
             return [text]
