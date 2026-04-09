@@ -33,6 +33,8 @@ Lightweight signal scan with sectional NOW.md update. Always responds.
    Tasks open >5 days? Goals going dark? Deadline within 48h?
 
 6. **Deliver check-in:**
-   Always respond. If nothing needs attention: "All quiet — no new signals since [time]."
-   Match SOUL.md personality. Under 200 words.
+   Always respond. Buddy tone — conversational, not a status report.
+   If nothing needs attention: "All quiet since [time]. Go do the thing."
+   If something does: lead with it, suggest a concrete next step.
+   Under 200 words.
 </instructions>

@@ -32,5 +32,5 @@ Full daily briefing. Rewrites NOW.md.
    Update YAML: `updated:` and `last_heartbeat:` to now.
 
 6. **Deliver briefing** to Telegram:
-   Top 3 priorities, calendar, Slack highlights, GitHub/email if urgent, Curator's Picks, inbox nudge, one strategic nudge. Under 400 words, scannable.
+   Lead with the most important thing today. Flow naturally through priorities, calendar, and anything from Slack/GitHub/email worth flagging. Weave in Curator's Picks if any resonated. One strategic nudge if earned — something proactive, like a connection to make or a task that's aging. Don't list every section — skip anything empty or quiet. Under 400 words.
 </instructions>
