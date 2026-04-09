@@ -66,6 +66,13 @@ class Settings(BaseSettings):
         False,
         description="Allow all Claude tools by bypassing tool validation checks",
     )
+    setting_sources: Optional[List[str]] = Field(
+        default=["project"],
+        description=(
+            "Claude setting sources to load (user, project, local). "
+            "Comma-separated in .env."
+        ),
+    )
 
     # Claude settings
     claude_binary_path: Optional[str] = Field(
@@ -362,6 +369,18 @@ class Settings(BaseSettings):
             return [tool.strip() for tool in v.split(",") if tool.strip()]
         if isinstance(v, list):
             return [str(tool) for tool in v]
+        return v  # type: ignore[no-any-return]
+
+    @field_validator("setting_sources", mode="before")
+    @classmethod
+    def parse_setting_sources(cls, v: Any) -> Optional[List[str]]:
+        """Parse comma-separated setting source names."""
+        if v is None:
+            return ["project"]
+        if isinstance(v, str):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        if isinstance(v, list):
+            return [str(s) for s in v]
         return v  # type: ignore[no-any-return]
 
     @field_validator("approved_directory")

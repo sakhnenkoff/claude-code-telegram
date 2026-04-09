@@ -698,3 +698,28 @@ def test_configuration_error_handling():
                 "APPROVED_DIRECTORY",
             ]:
                 os.environ.pop(key, None)
+
+
+def test_setting_sources_parsing():
+    """Test parsing of comma-separated setting sources."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        settings = Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=tmp_dir,
+            allowed_users=[1],
+            setting_sources="user,project",
+        )
+        assert settings.setting_sources == ["user", "project"]
+
+
+def test_setting_sources_default():
+    """Default setting_sources is ['project']."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        settings = Settings(
+            telegram_bot_token="test_token",
+            telegram_bot_username="test_bot",
+            approved_directory=tmp_dir,
+            allowed_users=[1],
+        )
+        assert settings.setting_sources == ["project"]
