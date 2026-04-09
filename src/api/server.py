@@ -176,17 +176,46 @@ async def run_api_server(
     event_bus: EventBus,
     settings: Settings,
     db_manager: Optional[DatabaseManager] = None,
+    *,
+    max_retries: int = 5,
+    retry_delay: float = 2.0,
 ) -> None:
-    """Run the FastAPI server using uvicorn."""
+    """Run the FastAPI server using uvicorn.
+
+    Retries binding if the port is temporarily unavailable (e.g. after a
+    restart where the previous process hasn't fully released it yet).
+    """
+    import asyncio
+
     import uvicorn
 
     app = create_api_app(event_bus, settings, db_manager)
 
-    config = uvicorn.Config(
-        app=app,
-        host="0.0.0.0",
-        port=settings.api_server_port,
-        log_level="info" if not settings.debug else "debug",
-    )
-    server = uvicorn.Server(config)
-    await server.serve()
+    for attempt in range(1, max_retries + 1):
+        config = uvicorn.Config(
+            app=app,
+            host="0.0.0.0",
+            port=settings.api_server_port,
+            log_level="info" if not settings.debug else "debug",
+        )
+        server = uvicorn.Server(config)
+        try:
+            await server.serve()
+            return  # clean shutdown
+        except SystemExit as exc:
+            if attempt < max_retries:
+                logger.warning(
+                    "API server failed to bind, retrying",
+                    port=settings.api_server_port,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    exit_code=exc.code,
+                )
+                await asyncio.sleep(retry_delay * attempt)
+            else:
+                logger.error(
+                    "API server failed to bind after all retries",
+                    port=settings.api_server_port,
+                    attempts=max_retries,
+                )
+                raise
